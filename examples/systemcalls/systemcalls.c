@@ -1,4 +1,9 @@
 #include "systemcalls.h"
+#include <sys/types.h>      //For pid_t
+#include <sys/wait.h>       //For waitpid()
+#include <fcntl.h>          //For open()
+#include <stdlib.h>         //For exit()
+#include <unistd.h>         //For close()
 
 /**
  * @param cmd the command to execute with system()
@@ -16,6 +21,10 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
+
+    if(system(cmd) == -1){
+        return false;
+    }
 
     return true;
 }
@@ -45,9 +54,14 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
+
+    va_end(args);
+
+    const char* path = command[0];
+    char* const* arguments = &(command[0]);
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
+    //command[count] = command[count];
 
 /*
  * TODO:
@@ -58,8 +72,39 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+    pid_t childPid;
+    childPid = fork(); // zero for child, non-zero for parent (pid of child in parent)
 
-    va_end(args);
+    //failed to create child process
+    if(childPid == -1){ 
+        perror("failed to create child process"); 
+        return false;
+    }
+
+    //child process runs here
+    if(childPid == 0) {
+        execv(path, arguments);
+        perror("failed to replace child process");
+        exit(-1);
+    }
+
+    //parent process runs here
+    int status;
+
+    if(waitpid(childPid, &status, 0) == -1){
+        perror("wait exited with error");
+        return false;
+    }
+
+    if(WIFEXITED(status) == 0){
+        perror("terminated abnormally");
+        return false;
+    }
+
+    if(WEXITSTATUS(status) != 0){
+        perror("Error in child process");
+        return false;
+    }
 
     return true;
 }
@@ -79,10 +124,16 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     {
         command[i] = va_arg(args, char *);
     }
+
     command[count] = NULL;
+    
+    va_end(args);
+
+    const char* path = command[0];
+    char* const* arguments = &(command[0]);
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
+    //command[count] = command[count];
 
 
 /*
@@ -93,7 +144,48 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *
 */
 
-    va_end(args);
+    pid_t childPid;
+    childPid = fork(); // zero for child, non-zero for parent (pid of child in parent)
+
+    //failed to create child process
+    if(childPid == -1){ 
+        perror("failed to create child process"); 
+        exit(-1);
+    }
+
+    //child process runs here
+    if(childPid == 0) {
+        int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+
+        if (fd < 0) { 
+            perror("failed to open file"); 
+            exit(-1);
+        }
+
+        int newfd = dup2(fd, 1);
+        close(fd);
+
+        if (newfd == -1) { 
+            perror("failed to redirect stdout to fd"); 
+            exit(-1);
+        }
+        
+        execv(path, arguments);
+        perror("failed to replace child process");
+        exit(-1);
+    }
+
+    //parent process runs here
+    int status;
+
+    if(waitpid(childPid, &status, 0) == -1){
+        perror("wait exited with error");
+        return false;
+    }
+
+    if(WEXITSTATUS(status) == -1){
+        return false;
+    }
 
     return true;
 }
