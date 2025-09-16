@@ -1,3 +1,5 @@
+#!/bin/sh
+
 #check for 2 args
 if [ $# -ne 2 ]
 then
