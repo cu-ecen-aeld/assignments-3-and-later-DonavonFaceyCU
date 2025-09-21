@@ -61,7 +61,7 @@ int main(int argc, char*argv[]){
     //code for safe writing taken from Textbook, Linux System Programming Page 49
     int length = strlen(stringToWrite);
     char* currentChar = stringToWrite;
-    ssize_t ret, nr;
+    ssize_t ret;
     while (length != 0 && (ret = write (fileDescriptor, stringToWrite, length)) != 0) {
         if (ret == -1) {
             if (errno == EINTR)
