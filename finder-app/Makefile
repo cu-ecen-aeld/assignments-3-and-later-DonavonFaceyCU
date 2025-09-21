@@ -1,10 +1,12 @@
 #Cross Compiler is prefixed to default build target
-CROSS_COMPILE = 
+CC = $(CROSS_COMPILE)gcc
+CFLAGS=-Wall -Werror
 
 all: default
 
 default: writer.c
-	$(CROSS_COMPILE)gcc writer.c -o writer
+	rm -f writer
+	$(CC) $(CFLAGS) writer.c -o writer
 
 clean:
 	rm -f writer.o writer
