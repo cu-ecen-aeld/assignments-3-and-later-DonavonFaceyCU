@@ -20,7 +20,7 @@ Author: Donavon Facey
 #include <signal.h>     // for signals
 
 #define MAX_ARG_COUNT 2 // Includes program name
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 1024// Maximum buffer
 
 static void signal_handler(int signal_number);
 
