@@ -154,10 +154,10 @@ void socketLogger(bool runAsDaemon){
     printf("Socket Closed\n");
     close(log_fd);
 
-    if(remove("/var/tmp/aesdsocketdata") != 0){
+    //if(remove("/var/tmp/aesdsocketdata") != 0){
         //failed to delete temp file
-        exit(EXIT_FAILURE);
-    }
+    //    exit(EXIT_FAILURE);
+    //}
     
     exit(EXIT_SUCCESS);
 }
@@ -326,19 +326,18 @@ int bindPortToSocket(){
 
 int waitForConnection(int socket_fd){
     while(!caught_exit_signal){
-        struct sockaddr client_addr;
+        struct sockaddr_storage client_addr;   // <-- bigger, safe for all families
         socklen_t addr_size = sizeof(client_addr);
+
         printf("Waiting for connection...\n");
-        int client_fd = accept(socket_fd, &client_addr, &addr_size);
+        int client_fd = accept(socket_fd, (struct sockaddr*)&client_addr, &addr_size);
         if(client_fd == -1){
             if(errno == EINTR){
-                // Interrupted by signal, check exit flag
                 if(caught_exit_signal){
                     return -1;
                 }
                 continue;
             } else if(errno == EBADF){
-                // Socket closed, exit
                 break;
             }
             perror("accept");
@@ -346,12 +345,16 @@ int waitForConnection(int socket_fd){
         }
 
         char host[NI_MAXHOST];
-        if(getnameinfo(&client_addr, addr_size, host, sizeof(host), NULL, 0, NI_NUMERICHOST) == 0){
+        if(getnameinfo((struct sockaddr*)&client_addr, addr_size,
+                       host, sizeof(host),
+                       NULL, 0,
+                       NI_NUMERICHOST) == 0) {
             printf("Accepted connection from %s\n", host);
         }
 
         syslog(LOG_DEBUG, "Accepted connection from %s", host);
         syslog(LOG_DEBUG, "Closed Signal from %s", host);
+
         return client_fd;
     }
     return -1;
@@ -379,27 +382,30 @@ void Daemonize(bool beDaemon){
 }
 //This function was mostly generated using ChatGPT at https://chat.openai.com/ with prompts including "can you show me an example of a recurring timer (10sec)".
 timer_t createTimer(int file_fd){
-    timer_t timerid; 
-    struct sigevent sev; 
-    struct itimerspec its; 
+    timer_t timerid;
+    struct sigevent sev;
+    struct itimerspec its;
 
-    sev.sigev_notify = SIGEV_THREAD; 
-    sev.sigev_notify_function = timestamp_handler; 
-    sev.sigev_value.sival_ptr = &file_fd; 
-    sev.sigev_notify_attributes = NULL; 
+    memset(&sev, 0, sizeof(sev));
+    sev.sigev_notify = SIGEV_THREAD;
+    sev.sigev_notify_function = timestamp_handler;
+    /* store fd as an integer inside the pointer-sized field */
+    sev.sigev_value.sival_ptr = (void*)(intptr_t)file_fd;
+    sev.sigev_notify_attributes = NULL;
 
-    if(timer_create(CLOCK_REALTIME, &sev, &timerid) == -1){ 
-        perror("Failed to create timer"); exit(EXIT_FAILURE); 
-    } 
-    
-    its.it_value.tv_sec = 10; 
-    its.it_value.tv_nsec = 0; 
-    its.it_interval.tv_sec = 10; 
-    its.it_interval.tv_nsec = 0; 
-    
-    if(timer_settime(timerid, 0, &its, NULL) == -1){ 
-        perror("Failed to start timer"); 
-        exit(EXIT_FAILURE); 
+    if (timer_create(CLOCK_REALTIME, &sev, &timerid) == -1) {
+        perror("Failed to create timer");
+        exit(EXIT_FAILURE);
+    }
+
+    its.it_value.tv_sec = 10;
+    its.it_value.tv_nsec = 0;
+    its.it_interval.tv_sec = 10;
+    its.it_interval.tv_nsec = 0;
+
+    if (timer_settime(timerid, 0, &its, NULL) == -1){
+        perror("Failed to start timer");
+        exit(EXIT_FAILURE);
     }
 
     return timerid;
@@ -408,29 +414,29 @@ timer_t createTimer(int file_fd){
 //This function was partially generated using ChatGPT at https://chat.openai.com/ with prompts including "write me a function that writes wall time in RFC2822 format to a file"
 void timestamp_handler(union sigval sv){ 
     printf("Timer Fired!\n"); 
-    int log_fd = *(int *)sv.sival_ptr;
+    int log_fd = (int)(intptr_t)sv.sival_ptr;
     time_t rawtime; 
     struct tm *timeinfo; 
-    char buffer[256]; 
-    char timestamp_line[300]; 
-    
+    char buffer[500]; 
+    char timestamp_line[700]; 
+
     // Get current time 
     time(&rawtime); 
     timeinfo = localtime(&rawtime); 
-    
+
     // Format RFC 2822 timestamp 
     strftime(buffer, sizeof(buffer), "%a, %d %b %Y %H:%M:%S %z", timeinfo); 
-    
+
     // Build final string "timestamp:time\n" 
     snprintf(timestamp_line, sizeof(timestamp_line), "timestamp:%s\n", buffer); 
-    
+
     // Write string 
     pthread_mutex_lock(&log_lock); 
     ssize_t len = strlen(timestamp_line); 
-    if (write(*(int*)sv.sival_ptr, timestamp_line, len) != len) { 
+    if (write(log_fd, timestamp_line, len) != len) { 
         perror("timestamp write fail"); 
         close(log_fd); 
         exit(EXIT_FAILURE); 
     } 
-    pthread_mutex_unlock(&log_lock); 
+    pthread_mutex_unlock(&log_lock);
 }
