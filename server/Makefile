@@ -1,7 +1,5 @@
 # Cross Compiler is prefixed to default build target
-ifndef CC
-CC := $(CROSS_COMPILE)gcc
-endif
+CC ?= gcc
 CFLAGS ?= -g -Wall -Werror
 LDFLAGS ?= -lpthread -lrt
 TARGET ?= aesdsocket
