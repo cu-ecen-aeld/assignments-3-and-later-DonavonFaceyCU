@@ -18,6 +18,8 @@ Author: Donavon Facey
 #include <string.h>     // strlen()
 #include <errno.h>      // errno
 #include <signal.h>     // for signals
+#include <sys/queue.h>  // for queue
+#include <pthread.h>    // for threads
 
 #define MAX_ARG_COUNT 2 // Includes program name
 #define BUFFER_SIZE 1024// Maximum buffer
@@ -33,19 +35,24 @@ ssize_t sendFileToSocket(int client_fd, int file_fd);
 int bindPortToSocket();
 void registerSignalHandler();
 void Daemonize(bool beDaemon);
+void* client_handler(void* args);
 
-/*
+typedef struct thread_args_t {
+    int file_fd;
+    int client_fd;
+} thread_args_t;
+
 typedef struct thread_item {
-    pthread_t tid;
+    pthread_t thread;
+    thread_args_t thread_args;
     TAILQ_ENTRY(thread_item) entries;
 } thread_item_t;
-
 TAILQ_HEAD(thread_queue, thread_item);
-struct thread_queue threadQueue;
-pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
-*/
+
 bool caught_exit_signal = false;
 int socket_fd = -1;
+
+pthread_mutex_t log_lock;
 
 //This function was partially generated using ChatGPT at https://chat.openai.com/ with prompts including "Write me a usage function that might describe how a linux utility is used".
 void usage(const char *progname) {
@@ -69,6 +76,7 @@ int main(int argc, char*argv[]){
 
     if(argc == 1){
         socketLogger(false);
+        return 0;
     }
 
     if(argc == 2 && strcmp(argv[1], "-d") != 0){
@@ -76,6 +84,7 @@ int main(int argc, char*argv[]){
         usage(argv[0]);
     } else {
         socketLogger(true);
+        return 0;
     }
 }
 
@@ -92,10 +101,15 @@ void socketLogger(bool runAsDaemon){
         exit(EXIT_FAILURE);
     }
 
-    //TAILQ_INIT(&threadQueue);
+    struct thread_queue queue;
+    TAILQ_INIT(&queue);
 
     //open /var/tmp/aesdsocketdata
     int log_fd = open("/var/tmp/aesdsocketdata", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if(pthread_mutex_init(&log_lock, NULL) != 0){
+        perror("Failed to Init Mutex");
+        return;
+    }
 
     while(caught_exit_signal == false){
         int client_fd = waitForConnection(socket_fd);
@@ -104,24 +118,55 @@ void socketLogger(bool runAsDaemon){
             break;
         }
 
-        receivePacket(client_fd, log_fd);
-        printf("Bytes sent: %lu\n", sendFileToSocket(client_fd, log_fd));
-        close(client_fd);
-        closeConnection(socket_fd);
+        thread_item_t* threadPtr = malloc(sizeof(thread_item_t));
+        if(!threadPtr){
+            perror("Malloc Failed");
+            break;
+        }
+        threadPtr->thread_args.file_fd = log_fd;
+        threadPtr->thread_args.client_fd = client_fd;
+
+        if(pthread_create(&(threadPtr->thread), NULL, client_handler, &(threadPtr->thread_args)) != 0){
+            perror("Failed to create pthread");
+            break;
+        }
+
+        TAILQ_INSERT_TAIL(&queue, threadPtr, entries);
     }
 
     syslog(LOG_DEBUG, "Caught Signal, exiting");
     printf("Caught Signal, exiting\n");
+
+    while(!TAILQ_EMPTY(&queue)){
+        thread_item_t* threadPtr = TAILQ_FIRST(&queue);
+        pthread_join(threadPtr->thread, NULL);
+        TAILQ_REMOVE(&queue, threadPtr, entries);
+        free(threadPtr);
+    }
+
     close(socket_fd);
     printf("Socket Closed\n");
     close(log_fd);
-    
+
     if(remove("/var/tmp/aesdsocketdata") != 0){
         //failed to delete temp file
         exit(EXIT_FAILURE);
     }
     
     exit(EXIT_SUCCESS);
+}
+
+void* client_handler(void* args){
+    thread_args_t* thread_args = (thread_args_t*) args;
+    int log_fd = thread_args->file_fd;
+    int client_fd = thread_args->client_fd;
+
+    receivePacket(client_fd, log_fd);
+    printf("Bytes sent: %lu\n", sendFileToSocket(client_fd, log_fd));
+    close(client_fd);
+    closeConnection(socket_fd);
+
+    return NULL;
 }
 
 static void signal_handler(int signal_number){
@@ -135,13 +180,18 @@ static void signal_handler(int signal_number){
 
 //This function was fully generated using ChatGPT at https://chat.openai.com/ with prompts including "write me a function that takes in a file_fd, and a socket_fd, and writes the entire file to the socket".
 ssize_t sendFileToSocket(int socket_fd, int file_fd){
-    lseek(file_fd, 0, SEEK_SET);
+    
 
     char buffer[BUFFER_SIZE];
     ssize_t total_bytes_written = 0;
 
+    pthread_mutex_lock(&log_lock);
+    off_t ExternalPosition = lseek(file_fd, 0, SEEK_CUR);
+    lseek(file_fd, 0, SEEK_SET);
     while (1) {
+        
         ssize_t bytes_read = read(file_fd, buffer, sizeof(buffer));
+        
         if (bytes_read < 0) {
             perror("read");
             return -1;
@@ -163,6 +213,8 @@ ssize_t sendFileToSocket(int socket_fd, int file_fd){
 
         total_bytes_written += bytes_written;
     }
+    lseek(file_fd, ExternalPosition, SEEK_SET);
+    pthread_mutex_unlock(&log_lock);
 
     return total_bytes_written;
 }
@@ -198,6 +250,7 @@ void receivePacket(int client_fd, int file_fd) {
         if (ch == '\n') {
             // Write buffer to file
             ssize_t total_written = 0;
+            pthread_mutex_lock(&log_lock);
             while (total_written < len) {
                 ssize_t written = write(file_fd, buffer + total_written, len - total_written);
                 if (written <= 0) {
@@ -207,6 +260,7 @@ void receivePacket(int client_fd, int file_fd) {
                 total_written += written;
             }
             fsync(file_fd);
+            pthread_mutex_unlock(&log_lock);
             free(buffer);
             return;
         }
