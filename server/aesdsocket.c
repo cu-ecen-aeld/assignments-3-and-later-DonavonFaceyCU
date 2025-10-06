@@ -154,10 +154,10 @@ void socketLogger(bool runAsDaemon){
     printf("Socket Closed\n");
     close(log_fd);
 
-    if(remove("/var/tmp/aesdsocketdata") != 0){
+    //if(remove("/var/tmp/aesdsocketdata") != 0){
         //failed to delete temp file
-        exit(EXIT_FAILURE);
-    }
+    //    exit(EXIT_FAILURE);
+    //}
     
     exit(EXIT_SUCCESS);
 }
