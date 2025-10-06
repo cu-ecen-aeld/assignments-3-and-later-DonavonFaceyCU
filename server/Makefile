@@ -1,12 +1,14 @@
-#Cross Compiler is prefixed to default build target
-CC = $(CROSS_COMPILE)gcc
-CFLAGS=-Wall -Werror
+# Cross Compiler is prefixed to default build target
+CC ?= $(CROSS_COMPILE)gcc
+CFLAGS ?= -g -Wall -Werror
+LDFLAGS ?= -lpthread -lrt
+TARGET ?= aesdsocket
 
-all: default
+all: $(TARGET)
 
-default: aesdsocket.c
-	rm -f aesdsocket
-	$(CC) $(CFLAGS) aesdsocket.c -o aesdsocket
+$(TARGET): aesdsocket.c
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
 clean:
-	rm -f aesdsocket.o aesdsocket
+	rm -f $(TARGET)
+
