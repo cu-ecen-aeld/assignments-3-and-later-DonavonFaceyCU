@@ -20,6 +20,7 @@ Author: Donavon Facey
 #include <signal.h>     // for signals
 #include <sys/queue.h>  // for queue
 #include <pthread.h>    // for threads
+#include <time.h>       // for timer
 
 #define MAX_ARG_COUNT 2 // Includes program name
 #define BUFFER_SIZE 1024// Maximum buffer
@@ -29,13 +30,14 @@ static void signal_handler(int signal_number);
 void usage(const char *progname);
 void socketLogger(bool runAsDaemon);
 int waitForConnection(int socket_fd);
-void closeConnection(int socket_fd);
 void receivePacket(int client_fd, int file_fd);
 ssize_t sendFileToSocket(int client_fd, int file_fd);
 int bindPortToSocket();
 void registerSignalHandler();
 void Daemonize(bool beDaemon);
 void* client_handler(void* args);
+timer_t createTimer(int file_fd);
+void timestamp_handler(union sigval sv);
 
 typedef struct thread_args_t {
     int file_fd;
@@ -111,6 +113,8 @@ void socketLogger(bool runAsDaemon){
         return;
     }
 
+    timer_t timerid = createTimer(log_fd);
+
     while(caught_exit_signal == false){
         int client_fd = waitForConnection(socket_fd);
 
@@ -136,6 +140,8 @@ void socketLogger(bool runAsDaemon){
 
     syslog(LOG_DEBUG, "Caught Signal, exiting");
     printf("Caught Signal, exiting\n");
+
+    timer_delete(timerid);
 
     while(!TAILQ_EMPTY(&queue)){
         thread_item_t* threadPtr = TAILQ_FIRST(&queue);
@@ -164,7 +170,6 @@ void* client_handler(void* args){
     receivePacket(client_fd, log_fd);
     printf("Bytes sent: %lu\n", sendFileToSocket(client_fd, log_fd));
     close(client_fd);
-    closeConnection(socket_fd);
 
     return NULL;
 }
@@ -346,22 +351,10 @@ int waitForConnection(int socket_fd){
         }
 
         syslog(LOG_DEBUG, "Accepted connection from %s", host);
+        syslog(LOG_DEBUG, "Closed Signal from %s", host);
         return client_fd;
     }
     return -1;
-}
-
-void closeConnection(int socket_fd){
-    struct sockaddr client_addr;
-    socklen_t addr_size = sizeof(client_addr);
-    printf("Closing connection.\n");
-
-    char host[NI_MAXHOST];
-    if (getnameinfo(&client_addr, addr_size, host, sizeof(host), NULL, 0, NI_NUMERICHOST) == 0) {
-        printf("Accepted connection from %s\n", host);
-    }
-    
-    syslog(LOG_DEBUG, "Closed Signal from %s", host);
 }
 
 void registerSignalHandler(){
@@ -383,4 +376,61 @@ void Daemonize(bool beDaemon){
             exit(EXIT_FAILURE);
         }
     }
+}
+//This function was mostly generated using ChatGPT at https://chat.openai.com/ with prompts including "can you show me an example of a recurring timer (10sec)".
+timer_t createTimer(int file_fd){
+    timer_t timerid; 
+    struct sigevent sev; 
+    struct itimerspec its; 
+
+    sev.sigev_notify = SIGEV_THREAD; 
+    sev.sigev_notify_function = timestamp_handler; 
+    sev.sigev_value.sival_ptr = &file_fd; 
+    sev.sigev_notify_attributes = NULL; 
+
+    if(timer_create(CLOCK_REALTIME, &sev, &timerid) == -1){ 
+        perror("Failed to create timer"); exit(EXIT_FAILURE); 
+    } 
+    
+    its.it_value.tv_sec = 10; 
+    its.it_value.tv_nsec = 0; 
+    its.it_interval.tv_sec = 10; 
+    its.it_interval.tv_nsec = 0; 
+    
+    if(timer_settime(timerid, 0, &its, NULL) == -1){ 
+        perror("Failed to start timer"); 
+        exit(EXIT_FAILURE); 
+    }
+
+    return timerid;
+}
+
+//This function was partially generated using ChatGPT at https://chat.openai.com/ with prompts including "write me a function that writes wall time in RFC2822 format to a file"
+void timestamp_handler(union sigval sv){ 
+    printf("Timer Fired!\n"); 
+    int log_fd = *(int *)sv.sival_ptr;
+    time_t rawtime; 
+    struct tm *timeinfo; 
+    char buffer[256]; 
+    char timestamp_line[300]; 
+    
+    // Get current time 
+    time(&rawtime); 
+    timeinfo = localtime(&rawtime); 
+    
+    // Format RFC 2822 timestamp 
+    strftime(buffer, sizeof(buffer), "%a, %d %b %Y %H:%M:%S %z", timeinfo); 
+    
+    // Build final string "timestamp:time\n" 
+    snprintf(timestamp_line, sizeof(timestamp_line), "timestamp:%s\n", buffer); 
+    
+    // Write string 
+    pthread_mutex_lock(&log_lock); 
+    ssize_t len = strlen(timestamp_line); 
+    if (write(*(int*)sv.sival_ptr, timestamp_line, len) != len) { 
+        perror("timestamp write fail"); 
+        close(log_fd); 
+        exit(EXIT_FAILURE); 
+    } 
+    pthread_mutex_unlock(&log_lock); 
 }
