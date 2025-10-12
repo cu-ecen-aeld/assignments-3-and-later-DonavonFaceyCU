@@ -1,6 +1,6 @@
-#Faulty Driver Trace Analysis
+# Faulty Driver Trace Analysis
 
-##Stack Trace
+## Stack Trace
 ```
 # echo "hello_world" > /dev/faulty
 Unable to handle kernel NULL pointer dereference at virtual address 0000000000000000
@@ -47,7 +47,7 @@ Code: d2800001 d2800000 d503233f d50323bf (b900003f)
 ---[ end trace 0000000000000000 ]---
 ```
 
-##Analysis
+## Analysis
 The above trace shows how the kernel crashed. Most important is the first line "Unable to handle kernel NULL pointer dereference at virtual address 0000000000000000".
 This line shows that the code tried to access a null pointer, specifically within the faulty_write function (shown in the call trace and the program counter).
 The rest of the info provided gives more context to the error, but this is a pretty clear case.
