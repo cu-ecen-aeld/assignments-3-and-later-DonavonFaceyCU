@@ -35,6 +35,8 @@ static int aesd_release(struct inode *inode, struct file *filp);
 static ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
 static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
 
+static void aesd_print(void);
+
 struct aesd_dev aesd_device;
 
 static int aesd_open(struct inode *inode, struct file *filp)
@@ -75,6 +77,7 @@ static ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     struct aesd_buffer_entry* selectedEntry = aesd_circular_buffer_find_entry_offset_for_fpos(device->circularBuffer, *f_pos, &returnedByteOffset);
     
     if(returnedByteOffset == -1){ //did not find a byte at offset f_pos
+        PDEBUG("Failed to find character at desired file position");
         retval = 0;
         goto endfunc;
     }
@@ -82,15 +85,21 @@ static ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     size_t bytesLeftInEntry = selectedEntry->size - returnedByteOffset;
     
     if (copy_to_user(buf, selectedEntry->buffptr + returnedByteOffset, bytesLeftInEntry)){
+        PDEBUG("Failed to copy bytes");
         retval = -EFAULT;  // failed to copy some bytes
         goto endfunc;
     }  
     *f_pos += bytesLeftInEntry;
     retval = bytesLeftInEntry;
 
+    for(int i = 0; i < bytesLeftInEntry; i++){
+        PDEBUG("%c",selectedEntry->buffptr[i]);
+    }
     endfunc:
     //release semaphore
     up(device->aesd_dev_lock);
+    PDEBUG("Successfully Read %ld Bytes with String: ",retval);
+    aesd_print();
     return retval;
 }
 
@@ -117,6 +126,7 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
 
     int CommandTerminatorIndex = 0;
     for(CommandTerminatorIndex = 0; CommandTerminatorIndex < count; CommandTerminatorIndex++){
+        PDEBUG("Checking for terminator at %i, found char:%c",CommandTerminatorIndex,temp_buffer[CommandTerminatorIndex]);
         if(temp_buffer[CommandTerminatorIndex] == '\n'){
             break;
         }
@@ -126,9 +136,9 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
     bool foundTerminator = false;
     if(CommandTerminatorIndex == count){ //no terminator found
         bytesToAdd = count;
-        foundTerminator = true;
     } else { //terminator found
         bytesToAdd = CommandTerminatorIndex + 1; //Want to include \n in newTempBuffer
+        foundTerminator = true;
     }
     //acquire semaphore
     down(device->aesd_dev_lock);
@@ -139,11 +149,12 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
         goto endfunc;
     }
     device->tempEntry->buffptr = newTempBuffer;
-    memcpy(device->tempEntry->buffptr + device->tempEntry->size, newTempBuffer, bytesToAdd);
+    memcpy(device->tempEntry->buffptr + device->tempEntry->size, temp_buffer, bytesToAdd);
     device->tempEntry->size += bytesToAdd;
 
     //if \n, krealloc temporary buffer to size to hold \n. Acquire Semaphore. Pass temporary buffer to circular buffer. Release Semaphore. return with partial write.
     if(foundTerminator){
+        PDEBUG("Writing to CircularBuffer");
         //copy tempEntry into circularBuffer, circularBuffer takes ownership of entry's string
         char* overwrittenEntry = aesd_circular_buffer_add_entry(device->circularBuffer, device->tempEntry); //circular buffer takes ownership of entry
         
@@ -166,6 +177,8 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
     endfunc:
     //release semaphore
     up(device->aesd_dev_lock);
+    PDEBUG("wrote %zu bytes",bytesToAdd);
+    aesd_print();
     return retval;
 }
 
@@ -288,7 +301,36 @@ static void aesd_cleanup_module(void)
     unregister_chrdev_region(devno, 1);
 }
 
+static void aesd_print(void){
+    down(aesd_device.aesd_dev_lock);
 
+    PDEBUG("\n");
+    PDEBUG("Semaphore : %p", aesd_device.aesd_dev_lock);
+    PDEBUG("\tCount: %i",aesd_device.aesd_dev_lock->count);
+    
+    PDEBUG("\n");
+    PDEBUG("Temp Entry : %p", aesd_device.tempEntry);
+    PDEBUG("\tSize: %lu", aesd_device.tempEntry->size);
+    if(aesd_device.tempEntry->size > 0) { 
+        PDEBUG("\tString: %s", aesd_device.tempEntry->buffptr); 
+        PDEBUG("\tChars:");
+        for(int i = 0; i < aesd_device.tempEntry->size; i++){
+            PDEBUG("\t%c", aesd_device.tempEntry->buffptr[i]);
+        }
+    }
+    else {PDEBUG("\tString: {EMPTY}"); }
+
+    PDEBUG("\n");
+    PDEBUG("Circular Buffer : %p", aesd_device.circularBuffer);
+    for(int i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++){
+        PDEBUG("\tEntry %i:", i);
+        PDEBUG("\t\tSize: %lu", aesd_device.circularBuffer->entry[i].size);
+        if(aesd_device.circularBuffer->entry[i].size > 0) { PDEBUG("\tString: %s", aesd_device.circularBuffer->entry[i].buffptr); }
+        else {PDEBUG("\t\tString: {EMPTY}"); }
+    }
+
+    up(aesd_device.aesd_dev_lock);
+}
 
 module_init(aesd_init_module);
 module_exit(aesd_cleanup_module);
