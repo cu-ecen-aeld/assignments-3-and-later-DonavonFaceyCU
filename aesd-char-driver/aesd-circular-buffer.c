@@ -51,10 +51,6 @@ static void aesd_buffer_print(struct aesd_circular_buffer *buffer){
 struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer,
             size_t char_offset, size_t *entry_offset_byte_rtn )
 {
-    /**
-    * TODO: implement per description
-    */
-
     #if DEBUG==1
     printf("\nCalling find_entry_offset with char_offset=%lu\n",char_offset);
     aesd_buffer_print(buffer);
@@ -98,16 +94,19 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 * new start location.
 * Any necessary locking must be handled by the caller
 * Any memory referenced in @param add_entry must be allocated by and/or must have a lifetime managed by the caller.
+* @return NULL, unless if an entry was replaced, then the entry is returned so caller may free it.
 */
-void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
+const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
-    /**
-    * TODO: implement per description
-    */
-
     #if DEBUG==1
     //aesd_buffer_print(buffer);
     #endif
+
+    size_t returnValue = NULL;
+
+    if(buffer->full){
+        returnValue = buffer->entry[buffer->in_offs].buffptr;
+    }
 
     //copy param to buffer
     memcpy(&(buffer->entry[buffer->in_offs]), add_entry, sizeof(struct aesd_buffer_entry));
@@ -124,6 +123,8 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     if(buffer->out_offs == buffer->in_offs){
         buffer->full = true;
     }
+
+    return returnValue;
 }
 
 /**
