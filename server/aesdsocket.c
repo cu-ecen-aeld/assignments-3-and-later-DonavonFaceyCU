@@ -25,6 +25,10 @@ Author: Donavon Facey
 #define MAX_ARG_COUNT 2 // Includes program name
 #define BUFFER_SIZE 1024// Maximum buffer
 
+#ifndef USE_AESD_CHAR_DEVICE
+#define USE_AESD_CHAR_DEVICE 1
+#endif
+
 static void signal_handler(int signal_number);
 
 void usage(const char *progname);
@@ -107,14 +111,19 @@ void socketLogger(bool runAsDaemon){
     TAILQ_INIT(&queue);
 
     //open /var/tmp/aesdsocketdata
+#if USE_AESD_CHAR_DEVICE == 0
     int log_fd = open("/var/tmp/aesdsocketdata", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    close(log_fd);
+    #elif USE_AESD_CHAR_DEVICE == 1
+    int log_fd = 0;
+#endif
     if(pthread_mutex_init(&log_lock, NULL) != 0){
         perror("Failed to Init Mutex");
         return;
     }
-
-    timer_t timerid = createTimer(log_fd);
-
+#if USE_AESD_CHAR_DEVICE == 0
+    timer_t timerid = createTimer(log_fd);  
+#endif
     while(caught_exit_signal == false){
         int client_fd = waitForConnection(socket_fd);
 
@@ -127,6 +136,9 @@ void socketLogger(bool runAsDaemon){
             perror("Malloc Failed");
             break;
         }
+        #if USE_AESD_CHAR_DEVICE == 1
+        log_fd = open("/var/tmp/aesdsocketdata", O_RDWR | O_APPEND);
+        #endif
         threadPtr->thread_args.file_fd = log_fd;
         threadPtr->thread_args.client_fd = client_fd;
 
@@ -140,9 +152,9 @@ void socketLogger(bool runAsDaemon){
 
     syslog(LOG_DEBUG, "Caught Signal, exiting");
     printf("Caught Signal, exiting\n");
-
+#if USE_AESD_CHAR_DEVICE == 0
     timer_delete(timerid);
-
+#endif
     while(!TAILQ_EMPTY(&queue)){
         thread_item_t* threadPtr = TAILQ_FIRST(&queue);
         pthread_join(threadPtr->thread, NULL);
@@ -152,12 +164,15 @@ void socketLogger(bool runAsDaemon){
 
     close(socket_fd);
     printf("Socket Closed\n");
-    close(log_fd);
+    
 
-    //if(remove("/var/tmp/aesdsocketdata") != 0){
+#if USE_AESD_CHAR_DEVICE == 0
+    close(log_fd);
+    if(remove("/var/tmp/aesdsocketdata") != 0){
         //failed to delete temp file
-    //    exit(EXIT_FAILURE);
-    //}
+        exit(EXIT_FAILURE);
+    }
+#endif
     
     exit(EXIT_SUCCESS);
 }
@@ -170,6 +185,9 @@ void* client_handler(void* args){
     receivePacket(client_fd, log_fd);
     printf("Bytes sent: %lu\n", sendFileToSocket(client_fd, log_fd));
     close(client_fd);
+    #if USE_AESD_CHAR_DEVICE == 1
+    close(log_fd);
+    #endif
 
     return NULL;
 }
