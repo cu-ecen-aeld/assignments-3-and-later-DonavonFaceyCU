@@ -75,6 +75,13 @@ void usage(const char *progname) {
 }
 
 int main(int argc, char*argv[]){
+#if USE_AESD_CHAR_DEVICE == 1
+    printf("Running with Char Device\n");
+#else
+    printf("Running with Log File\n");
+#endif  
+
+
     if(argc > MAX_ARG_COUNT){
         printf("Error. Too many arguments.\n");
         usage(argv[0]);
@@ -112,18 +119,17 @@ void socketLogger(bool runAsDaemon){
 
     //open /var/tmp/aesdsocketdata
 #if USE_AESD_CHAR_DEVICE == 0
-    int log_fd = open("/var/tmp/aesdsocketdata", O_RDWR | O_CREAT | O_TRUNC, 0644);
-    close(log_fd);
-    #elif USE_AESD_CHAR_DEVICE == 1
-    int log_fd = 0;
+    char* log_filename = "/var/tmp/aesdsocketdata";
+    int timer_log_fd = open("/var/tmp/aesdsocketdata", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    timer_t timerid = createTimer(timer_log_fd);
+#elif USE_AESD_CHAR_DEVICE == 1
+    char* log_filename = "/dev/aesdchar";
 #endif
     if(pthread_mutex_init(&log_lock, NULL) != 0){
         perror("Failed to Init Mutex");
         return;
     }
-#if USE_AESD_CHAR_DEVICE == 0
-    timer_t timerid = createTimer(log_fd);  
-#endif
+
     while(caught_exit_signal == false){
         int client_fd = waitForConnection(socket_fd);
 
@@ -136,9 +142,11 @@ void socketLogger(bool runAsDaemon){
             perror("Malloc Failed");
             break;
         }
-        #if USE_AESD_CHAR_DEVICE == 1
-        log_fd = open("/var/tmp/aesdsocketdata", O_RDWR | O_APPEND);
-        #endif
+        int log_fd = open(log_filename, O_RDWR | O_APPEND); //thread will close log_fd
+        printf("log_fd at open: %i", log_fd);
+        if(log_fd == -1){
+            perror("open fd");
+        }
         threadPtr->thread_args.file_fd = log_fd;
         threadPtr->thread_args.client_fd = client_fd;
 
@@ -152,9 +160,11 @@ void socketLogger(bool runAsDaemon){
 
     syslog(LOG_DEBUG, "Caught Signal, exiting");
     printf("Caught Signal, exiting\n");
+
 #if USE_AESD_CHAR_DEVICE == 0
     timer_delete(timerid);
 #endif
+
     while(!TAILQ_EMPTY(&queue)){
         thread_item_t* threadPtr = TAILQ_FIRST(&queue);
         pthread_join(threadPtr->thread, NULL);
@@ -167,7 +177,7 @@ void socketLogger(bool runAsDaemon){
     
 
 #if USE_AESD_CHAR_DEVICE == 0
-    close(log_fd);
+    close(timer_log_fd);
     if(remove("/var/tmp/aesdsocketdata") != 0){
         //failed to delete temp file
         exit(EXIT_FAILURE);
@@ -185,9 +195,7 @@ void* client_handler(void* args){
     receivePacket(client_fd, log_fd);
     printf("Bytes sent: %lu\n", sendFileToSocket(client_fd, log_fd));
     close(client_fd);
-    #if USE_AESD_CHAR_DEVICE == 1
     close(log_fd);
-    #endif
 
     return NULL;
 }
@@ -203,7 +211,7 @@ static void signal_handler(int signal_number){
 
 //This function was fully generated using ChatGPT at https://chat.openai.com/ with prompts including "write me a function that takes in a file_fd, and a socket_fd, and writes the entire file to the socket".
 ssize_t sendFileToSocket(int socket_fd, int file_fd){
-    
+    printf("log_fd at read: %i", file_fd);
 
     char buffer[BUFFER_SIZE];
     ssize_t total_bytes_written = 0;
@@ -212,7 +220,6 @@ ssize_t sendFileToSocket(int socket_fd, int file_fd){
     off_t ExternalPosition = lseek(file_fd, 0, SEEK_CUR);
     lseek(file_fd, 0, SEEK_SET);
     while (1) {
-        
         ssize_t bytes_read = read(file_fd, buffer, sizeof(buffer));
         
         if (bytes_read < 0) {
