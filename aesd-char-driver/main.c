@@ -17,54 +17,171 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+#include <linux/uaccess.h>
+#include <linux/semaphore.h>
+
 #include "aesdchar.h"
+
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Your Name Here"); /** TODO: fill in your name **/
+MODULE_AUTHOR("Donavon Facey"); /** TODO: fill in your name **/
 MODULE_LICENSE("Dual BSD/GPL");
+
+static int __init aesd_init_module(void);
+static void __exit aesd_cleanup_module(void);
+static int aesd_open(struct inode *inode, struct file *filp);
+static int aesd_release(struct inode *inode, struct file *filp);
+static ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
+static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
+
+static void aesd_print(void);
 
 struct aesd_dev aesd_device;
 
-int aesd_open(struct inode *inode, struct file *filp)
+static int aesd_open(struct inode *inode, struct file *filp)
 {
     PDEBUG("open");
     /**
-     * TODO: handle open
+     * TODO: handle open //DONE
      */
+
+    struct aesd_dev *dev;
+    dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
+    filp->private_data = dev;
+    
     return 0;
 }
 
-int aesd_release(struct inode *inode, struct file *filp)
+static int aesd_release(struct inode *inode, struct file *filp)
 {
     PDEBUG("release");
     /**
-     * TODO: handle release
+     * TODO: handle release //DONE
      */
     return 0;
 }
 
-ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
+static ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = 0;
     PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
     /**
-     * TODO: handle read
+     * TODO: handle read //DONE
      */
+    struct aesd_dev* device = (struct aesd_dev*) filp->private_data;
+    size_t returnedByteOffset = -1;
+    //acquire semaphore
+    down(device->aesd_dev_lock);
+    struct aesd_buffer_entry* selectedEntry = aesd_circular_buffer_find_entry_offset_for_fpos(device->circularBuffer, *f_pos, &returnedByteOffset);
+    
+    if(returnedByteOffset == -1){ //did not find a byte at offset f_pos
+        PDEBUG("Failed to find character at desired file position");
+        retval = 0;
+        goto endfunc;
+    }
+
+    size_t bytesLeftInEntry = selectedEntry->size - returnedByteOffset;
+    
+    if (copy_to_user(buf, selectedEntry->buffptr + returnedByteOffset, bytesLeftInEntry)){
+        PDEBUG("Failed to copy bytes");
+        retval = -EFAULT;  // failed to copy some bytes
+        goto endfunc;
+    }  
+    *f_pos += bytesLeftInEntry;
+    retval = bytesLeftInEntry;
+
+    for(int i = 0; i < bytesLeftInEntry; i++){
+        PDEBUG("%c",selectedEntry->buffptr[i]);
+    }
+    endfunc:
+    //release semaphore
+    up(device->aesd_dev_lock);
+    PDEBUG("Successfully Read %ld Bytes with String: ",retval);
+    aesd_print();
     return retval;
 }
 
-ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
+static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
     /**
-     * TODO: handle write
+     * TODO: handle write //DONE
      */
+
+    struct aesd_dev* device = (struct aesd_dev*) filp->private_data;
+
+    char* temp_buffer = kmalloc(count, GFP_KERNEL);
+    if(!temp_buffer){
+        return -ENOMEM;
+    }
+    
+
+    if (copy_from_user(temp_buffer, buf, count)){
+        return -EFAULT;  // failed to copy some bytes
+    }  
+
+    int CommandTerminatorIndex = 0;
+    for(CommandTerminatorIndex = 0; CommandTerminatorIndex < count; CommandTerminatorIndex++){
+        PDEBUG("Checking for terminator at %i, found char:%c",CommandTerminatorIndex,temp_buffer[CommandTerminatorIndex]);
+        if(temp_buffer[CommandTerminatorIndex] == '\n'){
+            break;
+        }
+    }
+
+    size_t bytesToAdd;
+    bool foundTerminator = false;
+    if(CommandTerminatorIndex == count){ //no terminator found
+        bytesToAdd = count;
+    } else { //terminator found
+        bytesToAdd = CommandTerminatorIndex + 1; //Want to include \n in newTempBuffer
+        foundTerminator = true;
+    }
+    //acquire semaphore
+    down(device->aesd_dev_lock);
+    
+    char* newTempBuffer = krealloc(device->tempEntry->buffptr, device->tempEntry->size + bytesToAdd, GFP_KERNEL);
+    if(!newTempBuffer){ //failed to allocate new temp buffer
+        retval = -ENOMEM;
+        goto endfunc;
+    }
+    device->tempEntry->buffptr = newTempBuffer;
+    memcpy(((char*)device->tempEntry->buffptr) + device->tempEntry->size, temp_buffer, bytesToAdd);
+    device->tempEntry->size += bytesToAdd;
+
+    //if \n, krealloc temporary buffer to size to hold \n. Acquire Semaphore. Pass temporary buffer to circular buffer. Release Semaphore. return with partial write.
+    if(foundTerminator){
+        PDEBUG("Writing to CircularBuffer");
+        //copy tempEntry into circularBuffer, circularBuffer takes ownership of entry's string
+        char* overwrittenEntry = aesd_circular_buffer_add_entry(device->circularBuffer, device->tempEntry); //circular buffer takes ownership of entry
+        
+        //if old entry is overwritten, free old entry's string
+        if(overwrittenEntry){
+            kfree(overwrittenEntry);
+        }
+        
+        //reset tempEntry to empty
+        device->tempEntry->size = 0;
+        device->tempEntry->buffptr = kmalloc(0, GFP_KERNEL);
+        if(!device->tempEntry->buffptr){
+            retval = -ENOMEM;
+            goto endfunc;
+        }
+    }
+    
+    retval = bytesToAdd;
+
+    endfunc:
+    //release semaphore
+    up(device->aesd_dev_lock);
+    PDEBUG("wrote %zu bytes",bytesToAdd);
+    aesd_print();
     return retval;
 }
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
@@ -89,7 +206,7 @@ static int aesd_setup_cdev(struct aesd_dev *dev)
 
 
 
-int aesd_init_module(void)
+static int aesd_init_module(void)
 {
     dev_t dev = 0;
     int result;
@@ -103,32 +220,117 @@ int aesd_init_module(void)
     memset(&aesd_device,0,sizeof(struct aesd_dev));
 
     /**
-     * TODO: initialize the AESD specific portion of the device
+     * TODO: initialize the AESD specific portion of the device //DONE
      */
+    
+    aesd_device.circularBuffer = kmalloc(sizeof(struct aesd_circular_buffer),GFP_KERNEL);
+    if(!aesd_device.circularBuffer) {
+        result = -ENOMEM;
+        goto free_endfunc;
+    }
+    memset(aesd_device.circularBuffer,0,sizeof(struct aesd_circular_buffer));
+
+    aesd_device.tempEntry = kmalloc(sizeof(struct aesd_circular_buffer),GFP_KERNEL);
+    if(!aesd_device.tempEntry) {
+        result = -ENOMEM;
+        goto free_circularBuffer;
+    }
+    memset(aesd_device.tempEntry,0,sizeof(struct aesd_buffer_entry));
+
+    aesd_device.tempEntry->size = 0;
+    aesd_device.tempEntry->buffptr = kmalloc(0, GFP_KERNEL);
+    if(!aesd_device.tempEntry->buffptr){
+        result = -ENOMEM;
+        goto free_tempEntry;
+    }
+
+    aesd_device.aesd_dev_lock = kmalloc(sizeof(struct semaphore),GFP_KERNEL);
+    if(!aesd_device.aesd_dev_lock) {
+        result = -ENOMEM;
+        goto free_tempEntryString;
+    }
+    memset(aesd_device.aesd_dev_lock,0,sizeof(struct aesd_buffer_entry));
+    sema_init(aesd_device.aesd_dev_lock, 1);
 
     result = aesd_setup_cdev(&aesd_device);
 
-    if( result ) {
-        unregister_chrdev_region(dev, 1);
+    //initialized all correctly
+    if(result == 0){
+        return result;
     }
+
+    //cleanup path
+    //free_chrdev:
+    unregister_chrdev_region(dev, 1);
+    //free_semaphore:
+    kfree(aesd_device.aesd_dev_lock);
+    free_tempEntryString:
+    kfree(aesd_device.tempEntry->buffptr);
+    free_tempEntry:
+    kfree(aesd_device.tempEntry);
+    free_circularBuffer:
+    kfree(aesd_device.circularBuffer);
+    free_endfunc:
     return result;
 
 }
 
-void aesd_cleanup_module(void)
+static void aesd_cleanup_module(void)
 {
     dev_t devno = MKDEV(aesd_major, aesd_minor);
 
     cdev_del(&aesd_device.cdev);
 
     /**
-     * TODO: cleanup AESD specific poritions here as necessary
+     * TODO: cleanup AESD specific poritions here as necessary //DONE
      */
+
+    //free circular buffer contents
+    uint8_t index;
+    struct aesd_buffer_entry *entry;
+    AESD_CIRCULAR_BUFFER_FOREACH(entry,aesd_device.circularBuffer,index) {
+        kfree(entry->buffptr);
+    }
+
+    //free circular buffer struct
+    kfree(aesd_device.aesd_dev_lock);
+    kfree(aesd_device.tempEntry->buffptr);
+    kfree(aesd_device.tempEntry);
+    kfree(aesd_device.circularBuffer);
 
     unregister_chrdev_region(devno, 1);
 }
 
+static void aesd_print(void){
+    down(aesd_device.aesd_dev_lock);
 
+    PDEBUG("\n");
+    PDEBUG("Semaphore : %p", aesd_device.aesd_dev_lock);
+    PDEBUG("\tCount: %i",aesd_device.aesd_dev_lock->count);
+    
+    PDEBUG("\n");
+    PDEBUG("Temp Entry : %p", aesd_device.tempEntry);
+    PDEBUG("\tSize: %lu", aesd_device.tempEntry->size);
+    if(aesd_device.tempEntry->size > 0) { 
+        PDEBUG("\tString: %s", aesd_device.tempEntry->buffptr); 
+        PDEBUG("\tChars:");
+        for(int i = 0; i < aesd_device.tempEntry->size; i++){
+            PDEBUG("\t%c", aesd_device.tempEntry->buffptr[i]);
+        }
+    }
+    else {PDEBUG("\tString: {EMPTY}"); }
+
+    PDEBUG("\n");
+    PDEBUG("Circular Buffer : %p", aesd_device.circularBuffer);
+    for(int i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++){
+        PDEBUG("\tEntry %i:", i);
+        PDEBUG("\t\tSize: %lu", aesd_device.circularBuffer->entry[i].size);
+        if(aesd_device.circularBuffer->entry[i].size > 0) { PDEBUG("\tString: %s", aesd_device.circularBuffer->entry[i].buffptr); }
+        else {PDEBUG("\t\tString: {EMPTY}"); }
+    }
+
+    up(aesd_device.aesd_dev_lock);
+}
 
 module_init(aesd_init_module);
 module_exit(aesd_cleanup_module);
