@@ -105,7 +105,7 @@ char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const 
     char* returnValue = NULL;
 
     if(buffer->full){
-        returnValue = buffer->entry[buffer->in_offs].buffptr;
+        returnValue = (char*) buffer->entry[buffer->in_offs].buffptr;
     }
 
     //copy param to buffer

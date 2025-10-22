@@ -149,7 +149,7 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
         goto endfunc;
     }
     device->tempEntry->buffptr = newTempBuffer;
-    memcpy(device->tempEntry->buffptr + device->tempEntry->size, temp_buffer, bytesToAdd);
+    memcpy(((char*)device->tempEntry->buffptr) + device->tempEntry->size, temp_buffer, bytesToAdd);
     device->tempEntry->size += bytesToAdd;
 
     //if \n, krealloc temporary buffer to size to hold \n. Acquire Semaphore. Pass temporary buffer to circular buffer. Release Semaphore. return with partial write.
