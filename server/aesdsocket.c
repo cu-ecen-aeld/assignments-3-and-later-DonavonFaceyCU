@@ -195,7 +195,7 @@ void* client_handler(void* args){
 
     printf("\tNew Thread Started!\n");
     receivePackets(client_fd, log_fd);
-    printf("\tThread Ending. Sending back this many bytes: %lu\n", sendFileToSocket(client_fd, log_fd));
+    printf("\tThread Ending:\n");
     close(client_fd);
     close(log_fd);
 
@@ -213,12 +213,11 @@ static void signal_handler(int signal_number){
 
 //This function was fully generated using ChatGPT at https://chat.openai.com/ with prompts including "write me a function that takes in a file_fd, and a socket_fd, and writes the entire file to the socket".
 ssize_t sendFileToSocket(int socket_fd, int file_fd){
-    //printf("log_fd at read: %i", file_fd);
+    printf("file_fd at socket readback: %i\n", file_fd);
 
     char buffer[BUFFER_SIZE];
     ssize_t total_bytes_written = 0;
 
-    pthread_mutex_lock(&log_lock);
     off_t ExternalPosition = lseek(file_fd, 0, SEEK_CUR);
     lseek(file_fd, 0, SEEK_SET);
     while (1) {
@@ -232,6 +231,8 @@ ssize_t sendFileToSocket(int socket_fd, int file_fd){
             break;
         }
 
+        printf("\tRead string: %.*s\n", (int)bytes_read, buffer);
+
         ssize_t bytes_written = 0;
         while (bytes_written < bytes_read) {
             ssize_t n = write(socket_fd, buffer + bytes_written, bytes_read - bytes_written);
@@ -243,10 +244,11 @@ ssize_t sendFileToSocket(int socket_fd, int file_fd){
             bytes_written += n;
         }
 
+        printf("\tWrote string: %.*s\n", (int)bytes_written, buffer);
+
         total_bytes_written += bytes_written;
     }
     lseek(file_fd, ExternalPosition, SEEK_SET);
-    pthread_mutex_unlock(&log_lock);
 
     return total_bytes_written;
 }
@@ -265,6 +267,7 @@ void receivePackets(int client_fd, int file_fd) {
     ssize_t bytesRead;
 
     while ((bytesRead = recv(client_fd, &ch, 1, 0)) > 0) {
+        //printf("Received %lu bytes from recv\n", bytesRead);
         // Append to buffer, resizing if needed
         if (len >= buf_size) {
             size_t new_size = buf_size * 2;
@@ -281,18 +284,24 @@ void receivePackets(int client_fd, int file_fd) {
 
         // Process packet when newline received
         if (ch == '\n') {
+            //printf("Received newline from recv\n");
             buffer[len] = '\0';  // Null-terminate the received string
 
             // --- Check for COMMAND:X,Y pattern ---
             if (strncmp(buffer, "AESDCHAR_IOCSEEKTO:", 19) == 0) {
+                printf("Received seek command\n");
                 struct aesd_seekto args;
                 if (sscanf(buffer, "AESDCHAR_IOCSEEKTO:%u,%u", &args.write_cmd, &args.write_cmd_offset) == 2) {
+                    pthread_mutex_lock(&log_lock);
                     ioctl(file_fd, AESDCHAR_IOCSEEKTO, args);
+                    pthread_mutex_unlock(&log_lock);
                 }
             } else {
+                printf("Received text command\n");
                 // Normal data — write buffer to file
                 ssize_t total_written = 0;
 
+                printf("file_fd at text command write: %i\n", file_fd);
                 pthread_mutex_lock(&log_lock);
                 while (total_written < (ssize_t)len) {
                     ssize_t written = write(file_fd, buffer + total_written, len - total_written);
@@ -302,15 +311,19 @@ void receivePackets(int client_fd, int file_fd) {
                     }
                     total_written += written;
                 }
+                printf("Successfully wrote %lu bytes to char device\n", total_written);
                 fsync(file_fd);
                 pthread_mutex_unlock(&log_lock);
             }
 
-            free(buffer);
-            return;
+            pthread_mutex_lock(&log_lock);
+            printf("\tFull Command Received. Sending back this many bytes: %lu\n", sendFileToSocket(client_fd, file_fd));
+            pthread_mutex_unlock(&log_lock);
+
+            len = 0;
         }
     }
-
+    /*
     // If connection closed before newline, write whatever we have
     if (len > 0) {
         ssize_t total_written = 0;
@@ -324,7 +337,7 @@ void receivePackets(int client_fd, int file_fd) {
         }
         fsync(file_fd);
     }
-
+    */
     free(buffer);
 }
 

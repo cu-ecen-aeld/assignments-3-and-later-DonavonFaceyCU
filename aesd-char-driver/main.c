@@ -58,7 +58,8 @@ static int aesd_open(struct inode *inode, struct file *filp)
 
 static int aesd_release(struct inode *inode, struct file *filp)
 {
-    PDEBUG("release");
+    aesd_print();
+    PDEBUG("release\n\n\n\n\n");
     /**
      * TODO: handle release //DONE
      */
@@ -112,7 +113,7 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
 {
     ssize_t retval = -ENOMEM;
     //PDEBUG("\n\n\n\n\n\n\n");
-    //PDEBUG("Calling write:\tcount: %zu\tf_pos:%lld",count,*f_pos);
+    PDEBUG("Calling write:\tcount: %zu\tf_pos:%lld",count,*f_pos);
     /**
      * TODO: handle write //DONE
      */
@@ -184,7 +185,7 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
     endfunc:
     //release semaphore
     up(device->aesd_dev_lock);
-    //PDEBUG("Exiting write:\tf_pos:%lld\t\tret:%lu",*f_pos,retval);
+    PDEBUG("Exiting write:\tf_pos:%lld\t\tret:%lu",*f_pos,retval);
     //aesd_print();
     return retval;
 }
@@ -192,7 +193,7 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
 loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
 {
     //PDEBUG("\n\n\n\n\n\n\n");
-    //PDEBUG("Calling llseek:\toffset: %lld\tf_pos:%lld",offset,filp->f_pos);
+    PDEBUG("Calling llseek:\toffset: %lld\tf_pos:%lld",offset,filp->f_pos);
     
     struct aesd_dev* device = (struct aesd_dev*) filp->private_data;
     loff_t returnedOffset = 0;
@@ -212,15 +213,15 @@ loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
 
     returnedOffset = fixed_size_llseek(filp, offset, whence, bufferLength);
 
-    //PDEBUG("Exiting llseek:\tf_pos:%lld\t\tret:%lld",filp->f_pos,returnedOffset);
+    PDEBUG("Exiting llseek:\tf_pos:%lld\t\tret:%lld",filp->f_pos,returnedOffset);
     return returnedOffset;
 }
 
 long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-    PDEBUG("\n\n\n\n\n\n\n");
+    //PDEBUG("\n\n\n\n\n\n\n");
     PDEBUG("Calling ioctl:\tcmd: %u\tf_pos: %lld", cmd, filp->f_pos);
-    PDEBUG("Expecting:\tcmd: %lu\tgot: %u", AESDCHAR_IOCSEEKTO, cmd);
+    //PDEBUG("Expecting:\tcmd: %lu\tgot: %u", AESDCHAR_IOCSEEKTO, cmd);
     switch (cmd) {
     case AESDCHAR_IOCSEEKTO: 
         struct aesd_dev *device = (struct aesd_dev *)filp->private_data;
@@ -397,11 +398,11 @@ static void aesd_print(void){
     PDEBUG("Temp Entry : %p", aesd_device.tempEntry);
     PDEBUG("\tSize: %lu", aesd_device.tempEntry->size);
     if(aesd_device.tempEntry->size > 0) { 
-        PDEBUG("\tString: %s", aesd_device.tempEntry->buffptr);
-        PDEBUG("\tChars:");
-        for(int i = 0; i < aesd_device.tempEntry->size; i++){
-            PDEBUG("\t%c", aesd_device.tempEntry->buffptr[i]);
-        }
+        PDEBUG("\tString: %.*s", (int)aesd_device.tempEntry->size, aesd_device.tempEntry->buffptr);
+        //PDEBUG("\tChars:");
+        //for(int i = 0; i < aesd_device.tempEntry->size; i++){
+        //    PDEBUG("\t%c", aesd_device.tempEntry->buffptr[i]);
+        //}
     }
     else {PDEBUG("\tString: {EMPTY}"); }
 
@@ -412,8 +413,11 @@ static void aesd_print(void){
     for(int i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++){
         PDEBUG("\tEntry %i:", i);
         PDEBUG("\t\tSize: %lu", aesd_device.circularBuffer->entry[i].size);
-        if(aesd_device.circularBuffer->entry[i].size > 0) { PDEBUG("\tString: %s", aesd_device.circularBuffer->entry[i].buffptr); }
-        else {PDEBUG("\t\tString: {EMPTY}"); }
+        if(aesd_device.circularBuffer->entry[i].size > 0) { 
+            PDEBUG("\tString: %.*s", (int)aesd_device.circularBuffer->entry[i].size, aesd_device.circularBuffer->entry[i].buffptr);
+        } else {
+            PDEBUG("\t\tString: {EMPTY}"); 
+        }
     }
 
     up(aesd_device.aesd_dev_lock);
