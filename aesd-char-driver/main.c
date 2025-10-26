@@ -225,36 +225,41 @@ loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
 
 long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-    switch(cmd){
-        case AESDCHAR_IOCSEEKTO:
-        struct aesd_dev* device = (struct aesd_dev*) filp->private_data;
-        struct aesd_seekto* argPointer = (struct aesd_seekto*) arg;
+    switch (cmd) {
+    case AESDCHAR_IOCSEEKTO: {
+        struct aesd_dev *device = (struct aesd_dev *)filp->private_data;
+        struct aesd_seekto seekto;
+        loff_t byteCount = 0;
 
-        if(argPointer->write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED){
-            //Circular Buffer is not large enough store write_cmd commands
+        if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)))
+            return -EFAULT;
+
+        if (seekto.write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
+            // Circular Buffer not large enough to store that many commands
             return -EINVAL;
         }
 
         ssize_t startIndex = device->circularBuffer->out_offs;
-        ssize_t endIndex = (device->circularBuffer->out_offs + argPointer->write_cmd) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
-        loff_t byteCount;
+        ssize_t endIndex = (device->circularBuffer->out_offs + seekto.write_cmd) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
 
-        //acquire semaphore
-        down(device->aesd_dev_lock);
+        // Acquire semaphore
+        down(&device->aesd_dev_lock);
 
-        for(int i = startIndex; i != (endIndex + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i = (i + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED){
-            if(i == endIndex){
-                byteCount += argPointer->write_cmd_offset;
+        for (int i = startIndex; i != (endIndex + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i = (i + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
+        {
+            if (i == endIndex) {
+                byteCount += seekto.write_cmd_offset;
             } else {
                 byteCount += device->circularBuffer->entry[i].size;
             }
         }
 
-        up(device->aesd_dev_lock);
+        up(&device->aesd_dev_lock);
 
         return aesd_llseek(filp, byteCount, SEEK_SET);
+    }
 
-        default:
+    default:
         return -EINVAL;
     }
 }

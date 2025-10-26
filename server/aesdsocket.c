@@ -21,6 +21,7 @@ Author: Donavon Facey
 #include <sys/queue.h>  // for queue
 #include <pthread.h>    // for threads
 #include <time.h>       // for timer
+#include "../aesd-char-driver/aesd_ioctl.h" //for ioctl
 
 #define MAX_ARG_COUNT 2 // Includes program name
 #define BUFFER_SIZE 1024// Maximum buffer
@@ -277,20 +278,33 @@ void receivePacket(int client_fd, int file_fd) {
 
         buffer[len++] = ch;
 
+        // Process packet when newline received
         if (ch == '\n') {
-            // Write buffer to file
-            ssize_t total_written = 0;
-            pthread_mutex_lock(&log_lock);
-            while (total_written < len) {
-                ssize_t written = write(file_fd, buffer + total_written, len - total_written);
-                if (written <= 0) {
-                    if (errno == EINTR) continue; // interrupted, retry
-                    break; // write error
+            buffer[len] = '\0';  // Null-terminate the received string
+
+            // --- Check for COMMAND:X,Y pattern ---
+            if (strncmp(buffer, "AESDCHAR_IOCSEEKTO:", 19) == 0) {
+                struct aesd_seekto args;
+                if (sscanf(buffer, "COMMAND:%lu,%lu", &args.write_cmd, &args.write_cmd_offset) == 2) {
+                    ioctl(file_fd, AESDCHAR_IOCSEEKTO, args);
                 }
-                total_written += written;
+            } else {
+                // Normal data — write buffer to file
+                ssize_t total_written = 0;
+
+                pthread_mutex_lock(&log_lock);
+                while (total_written < (ssize_t)len) {
+                    ssize_t written = write(file_fd, buffer + total_written, len - total_written);
+                    if (written <= 0) {
+                        if (errno == EINTR) continue; // interrupted, retry
+                        break; // write error
+                    }
+                    total_written += written;
+                }
+                fsync(file_fd);
+                pthread_mutex_unlock(&log_lock);
             }
-            fsync(file_fd);
-            pthread_mutex_unlock(&log_lock);
+
             free(buffer);
             return;
         }
@@ -299,7 +313,7 @@ void receivePacket(int client_fd, int file_fd) {
     // If connection closed before newline, write whatever we have
     if (len > 0) {
         ssize_t total_written = 0;
-        while (total_written < len) {
+        while (total_written < (ssize_t)len) {
             ssize_t written = write(file_fd, buffer + total_written, len - total_written);
             if (written <= 0) {
                 if (errno == EINTR) continue;
