@@ -69,7 +69,8 @@ static ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = 0;
-    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
+    PDEBUG("\n\n\n\n\n\n\n");
+    PDEBUG("Calling read:\tcount: %zu\tf_pos:%lld",count,*f_pos);
     /**
      * TODO: handle read //DONE
      */
@@ -80,7 +81,7 @@ static ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     struct aesd_buffer_entry* selectedEntry = aesd_circular_buffer_find_entry_offset_for_fpos(device->circularBuffer, *f_pos, &returnedByteOffset);
     
     if(returnedByteOffset == -1){ //did not find a byte at offset f_pos
-        PDEBUG("Failed to find character at desired file position");
+        //PDEBUG("Failed to find character at desired file position");
         retval = 0;
         goto endfunc;
     }
@@ -88,11 +89,11 @@ static ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     size_t bytesLeftInEntry = selectedEntry->size - returnedByteOffset;
     
     if (copy_to_user(buf, selectedEntry->buffptr + returnedByteOffset, bytesLeftInEntry)){
-        PDEBUG("Failed to copy bytes");
+        //PDEBUG("Failed to copy bytes");
         retval = -EFAULT;  // failed to copy some bytes
         goto endfunc;
     }  
-    *f_pos += bytesLeftInEntry;
+    filp->f_pos += bytesLeftInEntry;
     retval = bytesLeftInEntry;
 
     for(int i = 0; i < bytesLeftInEntry; i++){
@@ -101,7 +102,7 @@ static ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     endfunc:
     //release semaphore
     up(device->aesd_dev_lock);
-    PDEBUG("Successfully Read %ld Bytes with String: ",retval);
+    PDEBUG("Exiting read:\tf_pos:%lld\t\tret:%lu",*f_pos,retval);
     aesd_print();
     return retval;
 }
@@ -110,7 +111,8 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
                 loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
-    PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
+    PDEBUG("\n\n\n\n\n\n\n");
+    PDEBUG("Calling write:\tcount: %zu\tf_pos:%lld",count,*f_pos);
     /**
      * TODO: handle write //DONE
      */
@@ -129,7 +131,7 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
 
     int CommandTerminatorIndex = 0;
     for(CommandTerminatorIndex = 0; CommandTerminatorIndex < count; CommandTerminatorIndex++){
-        PDEBUG("Checking for terminator at %i, found char:%c",CommandTerminatorIndex,temp_buffer[CommandTerminatorIndex]);
+        //PDEBUG("Checking for terminator at %i, found char:%c",CommandTerminatorIndex,temp_buffer[CommandTerminatorIndex]);
         if(temp_buffer[CommandTerminatorIndex] == '\n'){
             break;
         }
@@ -175,18 +177,23 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
         }
     }
     
+    filp->f_pos += bytesToAdd;
     retval = bytesToAdd;
+    
 
     endfunc:
     //release semaphore
     up(device->aesd_dev_lock);
-    PDEBUG("wrote %zu bytes",bytesToAdd);
+    PDEBUG("Exiting write:\tf_pos:%lld\t\tret:%lu",*f_pos,retval);
     aesd_print();
     return retval;
 }
 
 loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
 {
+    PDEBUG("\n\n\n\n\n\n\n");
+    PDEBUG("Calling llseek:\toffset: %lld\tf_pos:%lld",offset,filp->f_pos);
+    
     struct aesd_dev* device = (struct aesd_dev*) filp->private_data;
     loff_t returnedOffset = 0;
     //acquire semaphore
@@ -194,32 +201,18 @@ loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
 
     //Check circular buffer length
     loff_t bufferLength = 0;
-    for(int i = device->circularBuffer->out_offs; i != device->circularBuffer->in_offs; i = (i + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED){
+    
+    //this only works because we never actually remove anything from the buffer
+    for (int i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++){
         bufferLength += device->circularBuffer->entry[i].size;
     }
 
     //release semaphore
     up(device->aesd_dev_lock);
 
-    switch(whence){
-        case SEEK_SET:
-        returnedOffset = offset;
-        break;
-        case SEEK_CUR:
-        returnedOffset = filp->f_pos + offset;
-        break;
-        case SEEK_END:
-        returnedOffset = bufferLength - 1 + offset;
-        break;
-        default:
-        return -EINVAL;
-    }
+    returnedOffset = fixed_size_llseek(filp, offset, whence, bufferLength);
 
-    if(returnedOffset < 0 || returnedOffset > bufferLength - 1){
-        return -EINVAL;
-    }
-
-    filp->f_pos = returnedOffset;
+    PDEBUG("Exiting llseek:\tf_pos:%lld\t\tret:%lld",filp->f_pos,returnedOffset);
     return returnedOffset;
 }
 
@@ -406,6 +399,8 @@ static void aesd_print(void){
 
     PDEBUG("\n");
     PDEBUG("Circular Buffer : %p", aesd_device.circularBuffer);
+    PDEBUG("\t Write Offset : %d", aesd_device.circularBuffer->in_offs);
+    PDEBUG("\t Read Offset : %d", aesd_device.circularBuffer->out_offs);
     for(int i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++){
         PDEBUG("\tEntry %i:", i);
         PDEBUG("\t\tSize: %lu", aesd_device.circularBuffer->entry[i].size);
