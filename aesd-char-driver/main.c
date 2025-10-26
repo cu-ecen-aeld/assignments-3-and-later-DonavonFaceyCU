@@ -21,6 +21,7 @@
 #include <linux/semaphore.h>
 
 #include "aesdchar.h"
+#include "aesd_ioctl.h"
 
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
@@ -34,6 +35,8 @@ static int aesd_open(struct inode *inode, struct file *filp);
 static int aesd_release(struct inode *inode, struct file *filp);
 static ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
 static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
+loff_t aesd_llseek(struct file *filp, loff_t offset, int whence);
 
 static void aesd_print(void);
 
@@ -182,12 +185,88 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
     return retval;
 }
 
+loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
+{
+    struct aesd_dev* device = (struct aesd_dev*) filp->private_data;
+    loff_t returnedOffset = 0;
+    //acquire semaphore
+    down(device->aesd_dev_lock);
+
+    //Check circular buffer length
+    loff_t bufferLength = 0;
+    for(int i = device->circularBuffer->out_offs; i != device->circularBuffer->in_offs; i = (i + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED){
+        bufferLength += device->circularBuffer->entry[i].size;
+    }
+
+    //release semaphore
+    up(device->aesd_dev_lock);
+
+    switch(whence){
+        case SEEK_SET:
+        returnedOffset = offset;
+        break;
+        case SEEK_CUR:
+        returnedOffset = filp->f_pos + offset;
+        break;
+        case SEEK_END:
+        returnedOffset = bufferLength - 1 + offset;
+        break;
+        default:
+        return -EINVAL;
+    }
+
+    if(returnedOffset < 0 || returnedOffset > bufferLength - 1){
+        return -EINVAL;
+    }
+
+    filp->f_pos = returnedOffset;
+    return returnedOffset;
+}
+
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    switch(cmd){
+        case AESDCHAR_IOCSEEKTO:
+        struct aesd_dev* device = (struct aesd_dev*) filp->private_data;
+        struct aesd_seekto* argPointer = (struct aesd_seekto*) arg;
+
+        if(argPointer->write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED){
+            //Circular Buffer is not large enough store write_cmd commands
+            return -EINVAL;
+        }
+
+        ssize_t startIndex = device->circularBuffer->out_offs;
+        ssize_t endIndex = (device->circularBuffer->out_offs + argPointer->write_cmd) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        loff_t byteCount;
+
+        //acquire semaphore
+        down(device->aesd_dev_lock);
+
+        for(int i = startIndex; i != (endIndex + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i = (i + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED){
+            if(i == endIndex){
+                byteCount += argPointer->write_cmd_offset;
+            } else {
+                byteCount += device->circularBuffer->entry[i].size;
+            }
+        }
+
+        up(device->aesd_dev_lock);
+
+        return aesd_llseek(filp, byteCount, SEEK_SET);
+
+        default:
+        return -EINVAL;
+    }
+}
+
 struct file_operations aesd_fops = {
-    .owner =    THIS_MODULE,
-    .read =     aesd_read,
-    .write =    aesd_write,
-    .open =     aesd_open,
-    .release =  aesd_release,
+    .owner          = THIS_MODULE,
+    .read           = aesd_read,
+    .write          = aesd_write,
+    .open           = aesd_open,
+    .release        = aesd_release,
+    .llseek         = aesd_llseek,
+    .unlocked_ioctl = aesd_ioctl,
 };
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
