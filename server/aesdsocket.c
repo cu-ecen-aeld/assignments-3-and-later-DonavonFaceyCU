@@ -219,7 +219,7 @@ ssize_t sendFileToSocket(int socket_fd, int file_fd){
     ssize_t total_bytes_written = 0;
 
     off_t ExternalPosition = lseek(file_fd, 0, SEEK_CUR);
-    lseek(file_fd, 0, SEEK_SET);
+    //lseek(file_fd, 0, SEEK_SET);
     while (1) {
         ssize_t bytes_read = read(file_fd, buffer, sizeof(buffer));
         
@@ -293,7 +293,7 @@ void receivePackets(int client_fd, int file_fd) {
                 struct aesd_seekto args;
                 if (sscanf(buffer, "AESDCHAR_IOCSEEKTO:%u,%u", &args.write_cmd, &args.write_cmd_offset) == 2) {
                     pthread_mutex_lock(&log_lock);
-                    ioctl(file_fd, AESDCHAR_IOCSEEKTO, args);
+                    ioctl(file_fd, AESDCHAR_IOCSEEKTO, &args);
                     pthread_mutex_unlock(&log_lock);
                 }
             } else {

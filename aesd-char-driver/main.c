@@ -58,7 +58,7 @@ static int aesd_open(struct inode *inode, struct file *filp)
 
 static int aesd_release(struct inode *inode, struct file *filp)
 {
-    aesd_print();
+    //aesd_print();
     PDEBUG("release\n\n\n\n\n");
     /**
      * TODO: handle release //DONE
@@ -224,14 +224,17 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     //PDEBUG("Expecting:\tcmd: %lu\tgot: %u", AESDCHAR_IOCSEEKTO, cmd);
     switch (cmd) {
     case AESDCHAR_IOCSEEKTO: 
+        PDEBUG("Received ioctl_AESDCHAR_IOCSEEKTO command");
         struct aesd_dev *device = (struct aesd_dev *)filp->private_data;
         struct aesd_seekto seekto;
         loff_t byteCount = 0;
 
-        if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)))
+        if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto))){
+            PDEBUG("Failed to copy arguments");
             return -EFAULT;
-
-        PDEBUG("Calling ioctl_AESDCHAR_IOCSEEKTO:\twrite_cmd: %u\twrite_cmd_offset:%u", seekto.write_cmd, seekto.write_cmd_offset);
+        }
+            
+        PDEBUG("Arguments:\twrite_cmd: %u\twrite_cmd_offset:%u", seekto.write_cmd, seekto.write_cmd_offset);
 
         if (seekto.write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
             // Circular Buffer not large enough to store that many commands
