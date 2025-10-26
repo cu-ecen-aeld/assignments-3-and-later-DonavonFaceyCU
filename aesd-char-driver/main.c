@@ -69,8 +69,8 @@ static ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = 0;
-    PDEBUG("\n\n\n\n\n\n\n");
-    PDEBUG("Calling read:\tcount: %zu\tf_pos:%lld",count,*f_pos);
+    //PDEBUG("\n\n\n\n\n\n\n");
+    PDEBUG("Calling read:\tcount: %zu\tf_pos:%lld\tfilp->f_pos:%lld",count,*f_pos,filp->f_pos);
     /**
      * TODO: handle read //DONE
      */
@@ -93,17 +93,17 @@ static ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
         retval = -EFAULT;  // failed to copy some bytes
         goto endfunc;
     }  
-    filp->f_pos += bytesLeftInEntry;
+    *f_pos += bytesLeftInEntry;
     retval = bytesLeftInEntry;
 
     for(int i = 0; i < bytesLeftInEntry; i++){
-        PDEBUG("%c",selectedEntry->buffptr[i]);
+        //PDEBUG("%c",selectedEntry->buffptr[i]);
     }
     endfunc:
     //release semaphore
     up(device->aesd_dev_lock);
-    PDEBUG("Exiting read:\tf_pos:%lld\t\tret:%lu",*f_pos,retval);
-    aesd_print();
+    PDEBUG("Exiting read:\tret:%lu\tf_pos:%lld\tfilp->f_pos:%lld",retval,*f_pos,filp->f_pos);
+    //aesd_print();
     return retval;
 }
 
@@ -111,8 +111,8 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
                 loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
-    PDEBUG("\n\n\n\n\n\n\n");
-    PDEBUG("Calling write:\tcount: %zu\tf_pos:%lld",count,*f_pos);
+    //PDEBUG("\n\n\n\n\n\n\n");
+    //PDEBUG("Calling write:\tcount: %zu\tf_pos:%lld",count,*f_pos);
     /**
      * TODO: handle write //DONE
      */
@@ -159,7 +159,7 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
 
     //if \n, krealloc temporary buffer to size to hold \n. Acquire Semaphore. Pass temporary buffer to circular buffer. Release Semaphore. return with partial write.
     if(foundTerminator){
-        PDEBUG("Writing to CircularBuffer");
+        //PDEBUG("Writing to CircularBuffer");
         //copy tempEntry into circularBuffer, circularBuffer takes ownership of entry's string
         char* overwrittenEntry = aesd_circular_buffer_add_entry(device->circularBuffer, device->tempEntry); //circular buffer takes ownership of entry
         
@@ -177,22 +177,22 @@ static ssize_t aesd_write(struct file *filp, const char __user *buf, size_t coun
         }
     }
     
-    filp->f_pos += bytesToAdd;
+    //*f_pos += bytesToAdd;
     retval = bytesToAdd;
     
 
     endfunc:
     //release semaphore
     up(device->aesd_dev_lock);
-    PDEBUG("Exiting write:\tf_pos:%lld\t\tret:%lu",*f_pos,retval);
-    aesd_print();
+    //PDEBUG("Exiting write:\tf_pos:%lld\t\tret:%lu",*f_pos,retval);
+    //aesd_print();
     return retval;
 }
 
 loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
 {
-    PDEBUG("\n\n\n\n\n\n\n");
-    PDEBUG("Calling llseek:\toffset: %lld\tf_pos:%lld",offset,filp->f_pos);
+    //PDEBUG("\n\n\n\n\n\n\n");
+    //PDEBUG("Calling llseek:\toffset: %lld\tf_pos:%lld",offset,filp->f_pos);
     
     struct aesd_dev* device = (struct aesd_dev*) filp->private_data;
     loff_t returnedOffset = 0;
@@ -212,20 +212,25 @@ loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
 
     returnedOffset = fixed_size_llseek(filp, offset, whence, bufferLength);
 
-    PDEBUG("Exiting llseek:\tf_pos:%lld\t\tret:%lld",filp->f_pos,returnedOffset);
+    //PDEBUG("Exiting llseek:\tf_pos:%lld\t\tret:%lld",filp->f_pos,returnedOffset);
     return returnedOffset;
 }
 
 long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
+    PDEBUG("\n\n\n\n\n\n\n");
+    PDEBUG("Calling ioctl:\tcmd: %u\tf_pos: %lld", cmd, filp->f_pos);
+    PDEBUG("Expecting:\tcmd: %lu\tgot: %u", AESDCHAR_IOCSEEKTO, cmd);
     switch (cmd) {
-    case AESDCHAR_IOCSEEKTO: {
+    case AESDCHAR_IOCSEEKTO: 
         struct aesd_dev *device = (struct aesd_dev *)filp->private_data;
         struct aesd_seekto seekto;
         loff_t byteCount = 0;
 
         if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)))
             return -EFAULT;
+
+        PDEBUG("Calling ioctl_AESDCHAR_IOCSEEKTO:\twrite_cmd: %u\twrite_cmd_offset:%u", seekto.write_cmd, seekto.write_cmd_offset);
 
         if (seekto.write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
             // Circular Buffer not large enough to store that many commands
@@ -249,8 +254,11 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
         up(device->aesd_dev_lock);
 
-        return aesd_llseek(filp, byteCount, SEEK_SET);
-    }
+        long retval = aesd_llseek(filp, byteCount, SEEK_SET);
+
+        PDEBUG("Exiting ioctl_AESDCHAR_IOCSEEKTO:\tf_pos:%lld\t\tret:%lu",filp->f_pos,retval);
+
+        return retval;
 
     default:
         return -EINVAL;
@@ -389,7 +397,7 @@ static void aesd_print(void){
     PDEBUG("Temp Entry : %p", aesd_device.tempEntry);
     PDEBUG("\tSize: %lu", aesd_device.tempEntry->size);
     if(aesd_device.tempEntry->size > 0) { 
-        PDEBUG("\tString: %s", aesd_device.tempEntry->buffptr); 
+        PDEBUG("\tString: %s", aesd_device.tempEntry->buffptr);
         PDEBUG("\tChars:");
         for(int i = 0; i < aesd_device.tempEntry->size; i++){
             PDEBUG("\t%c", aesd_device.tempEntry->buffptr[i]);

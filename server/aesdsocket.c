@@ -35,7 +35,7 @@ static void signal_handler(int signal_number);
 void usage(const char *progname);
 void socketLogger(bool runAsDaemon);
 int waitForConnection(int socket_fd);
-void receivePacket(int client_fd, int file_fd);
+void receivePackets(int client_fd, int file_fd);
 ssize_t sendFileToSocket(int client_fd, int file_fd);
 int bindPortToSocket();
 void registerSignalHandler();
@@ -144,7 +144,7 @@ void socketLogger(bool runAsDaemon){
             break;
         }
         int log_fd = open(log_filename, O_RDWR | O_APPEND); //thread will close log_fd
-        printf("log_fd at open: %i", log_fd);
+        //printf("log_fd at open: %i", log_fd);
         if(log_fd == -1){
             perror("open fd");
         }
@@ -193,8 +193,9 @@ void* client_handler(void* args){
     int log_fd = thread_args->file_fd;
     int client_fd = thread_args->client_fd;
 
-    receivePacket(client_fd, log_fd);
-    printf("Bytes sent: %lu\n", sendFileToSocket(client_fd, log_fd));
+    printf("\tNew Thread Started!\n");
+    receivePackets(client_fd, log_fd);
+    printf("\tThread Ending. Sending back this many bytes: %lu\n", sendFileToSocket(client_fd, log_fd));
     close(client_fd);
     close(log_fd);
 
@@ -212,7 +213,7 @@ static void signal_handler(int signal_number){
 
 //This function was fully generated using ChatGPT at https://chat.openai.com/ with prompts including "write me a function that takes in a file_fd, and a socket_fd, and writes the entire file to the socket".
 ssize_t sendFileToSocket(int socket_fd, int file_fd){
-    printf("log_fd at read: %i", file_fd);
+    //printf("log_fd at read: %i", file_fd);
 
     char buffer[BUFFER_SIZE];
     ssize_t total_bytes_written = 0;
@@ -252,7 +253,7 @@ ssize_t sendFileToSocket(int socket_fd, int file_fd){
 
 //This function was fully generated using ChatGPT at https://chat.openai.com/ with prompts including
 //"Can you rewrite this function to use a dynamically allocated buffer? It should receive until it receives a newline character, and then it should write the buffer to file_fd and return:" and my old version.
-void receivePacket(int client_fd, int file_fd) {
+void receivePackets(int client_fd, int file_fd) {
     size_t buf_size = BUFFER_SIZE;
     size_t len = 0;
     char *buffer = malloc(buf_size);
@@ -285,7 +286,7 @@ void receivePacket(int client_fd, int file_fd) {
             // --- Check for COMMAND:X,Y pattern ---
             if (strncmp(buffer, "AESDCHAR_IOCSEEKTO:", 19) == 0) {
                 struct aesd_seekto args;
-                if (sscanf(buffer, "COMMAND:%lu,%lu", &args.write_cmd, &args.write_cmd_offset) == 2) {
+                if (sscanf(buffer, "AESDCHAR_IOCSEEKTO:%u,%u", &args.write_cmd, &args.write_cmd_offset) == 2) {
                     ioctl(file_fd, AESDCHAR_IOCSEEKTO, args);
                 }
             } else {
