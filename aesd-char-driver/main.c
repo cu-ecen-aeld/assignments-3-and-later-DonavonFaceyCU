@@ -243,7 +243,7 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         ssize_t endIndex = (device->circularBuffer->out_offs + seekto.write_cmd) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
 
         // Acquire semaphore
-        down(&device->aesd_dev_lock);
+        down(device->aesd_dev_lock);
 
         for (int i = startIndex; i != (endIndex + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i = (i + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
         {
@@ -254,7 +254,7 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             }
         }
 
-        up(&device->aesd_dev_lock);
+        up(device->aesd_dev_lock);
 
         return aesd_llseek(filp, byteCount, SEEK_SET);
     }
